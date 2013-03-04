@@ -17,6 +17,7 @@ end
 require 'fiber'
 require 'eventmachine'
 require 'mysql2'
+require 'em-mysql2'
 require 'active_record/connection_adapters/mysql2_adapter'
 # require 'em-mysql2active_record/connection'
 
