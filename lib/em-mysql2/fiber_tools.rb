@@ -5,29 +5,52 @@
 # 
 module FiberTools
   
-  class Queue
-    def initialize
-      @queue = []
+  class Queue < Array
+    def add(what)
+      
+    end
+    
+    def delete()
+      
+    end
+    
+    def clear
+      
+    end
+    
+    def any_waiting?
+      
+    end
+    
+    
+    # def wait(timeout)
+    #   t = timeout || 5
+    #   fiber = Fiber.current
+    #   x = EM::Timer.new(t) do
+    #     @queue.delete(fiber)
+    #     fiber.resume(false)
+    #   end
+    #   @queue << fiber
+    #   Fiber.yield.tap do
+    #     x.cancel
+    #   end
+    # end
+    
+    
+    def can_remove_no_wait?
+      
+    end
+    
+    
+    def poll(timeout)
+      
     end
 
-    def wait(timeout)
-      t = timeout || 5
-      fiber = Fiber.current
-      x = EM::Timer.new(t) do
-        @queue.delete(fiber)
-        fiber.resume(false)
-      end
-      @queue << fiber
-      Fiber.yield.tap do
-        x.cancel
-      end
-    end
-
-    def signal
-      fiber = @queue.pop
-      fiber.resume(true) if fiber
-    end
-  end  
+    # def signal
+    #   fiber = @queue.pop
+    #   fiber.resume(true) if fiber
+    # end
+  end
 
   class Mutex
     def initialize
@@ -36,10 +59,12 @@ module FiberTools
     end
 
     def lock
+      log("   LOCK:try", self)
       current = Fiber.current
       raise FiberError if @waiters.include?(current)
       @waiters << current
       Fiber.yield unless @waiters.first == current
+      log("   LOCK:ok", self)
       true
     end
 
@@ -52,7 +77,8 @@ module FiberTools
     end
 
     def sleep(timeout = nil)
-      unlock    
+      log("   Mutex::sleep(#{timeout})")
+      unlock
       beg = Time.now
       current = Fiber.current
       @slept[current] = true
@@ -60,14 +86,19 @@ module FiberTools
         timer = EM.add_timer(timeout) do
           _wakeup(current)
         end
+        log("   Mutex::sleep(#{timeout}) - 1")
         Fiber.yield
+        log("   Mutex::sleep(#{timeout}) - 2")
         EM.cancel_timer timer # if we resumes not via timer
       else
         Fiber.yield
       end
       @slept.delete current
+      log("   Mutex::sleep(#{timeout}) - 3")
       yield if block_given?
+      log("   Mutex::sleep(#{timeout}) - 4")
       lock
+      log("   Mutex::sleep(#{timeout}) - 5")
       Time.now - beg
     end
 
@@ -81,6 +112,7 @@ module FiberTools
       unless @waiters.empty?
         EM.next_tick{ @waiters.first.resume }
       end
+      log("   LOCK:unlock", self)
       self
     end
 
@@ -119,9 +151,19 @@ module FiberTools
   # end
   
   class MonitorConditionVariable
-    def initialize
+    def initialize(m)
+      @mutex = m
       @queue = []
     end
+    
+    # def wait(timeout)
+    #   t = timeout || 5
+    #   fiber = Fiber.current
+    #   @queue << fiber
+    #   p [:A]
+    #   @mutex.sleep(timeout)
+    #   p [:B]
+    # end
 
     def wait(timeout)
       t = timeout || 5
@@ -150,16 +192,18 @@ module FiberTools
     end
     
     def synchronize
+      log("  synchronize start #{@count}", self)
       mon_enter()
       begin
         yield
       ensure
         mon_exit()
+        log("  synchronize end #{@count}", self)
       end
     end
     
     def new_cond
-      MonitorConditionVariable.new
+      MonitorConditionVariable.new(@mutex)
     end
   
   private
