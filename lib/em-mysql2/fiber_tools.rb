@@ -11,26 +11,18 @@ module FiberTools
       @slept = {}
     end
     
-    def dump_waiters(other = Fiber.current)
-      p [@waiters.map{|f| fiber_id(f.object_id).strip.to_i}, fiber_id(other.object_id).strip.to_i]
-    end
-
     def lock
-      log("   LOCK:try", self)
       current = Fiber.current
       
-      dump_waiters()
       if @waiters.include?(current)
         raise FiberError, "fiber tried to lock the mutex twice"
       end
       
       @waiters << current
       unless @waiters.first == current
-        log("   LOCK:waiting_for_lock", self)
         Fiber.yield
       end
-      log("   LOCK:ok", self)
-      dump_waiters()
+      
       true
     end
 
@@ -43,7 +35,6 @@ module FiberTools
     end
 
     def sleep(timeout = nil)
-      log("   Mutex::sleep(#{timeout})")
       unlock
       beg = Time.now
       current = Fiber.current
@@ -52,19 +43,14 @@ module FiberTools
         timer = EM.add_timer(timeout) do
           _wakeup(current)
         end
-        log("   Mutex::sleep(#{timeout}) - 1")
         Fiber.yield
-        log("   Mutex::sleep(#{timeout}) - 2")
         EM.cancel_timer timer # if we resumes not via timer
       else
         Fiber.yield
       end
       @slept.delete current
-      log("   Mutex::sleep(#{timeout}) - 3")
       yield if block_given?
-      log("   Mutex::sleep(#{timeout}) - 4")
       lock
-      log("   Mutex::sleep(#{timeout}) - 5")
       Time.now - beg
     end
 
@@ -175,13 +161,11 @@ module FiberTools
     end
     
     def synchronize
-      log("  synchronize start #{@count}", self)
       mon_enter()
       begin
         yield
       ensure
         mon_exit()
-        log("  synchronize end #{@count}", self)
       end
     end
     
@@ -195,9 +179,7 @@ module FiberTools
     #
     def mon_enter
       if @owner != Fiber.current
-        log("Waiting ownership")
         @mon_mutex.lock
-        log("Got ownership")
         @owner = Fiber.current
       end
       @count += 1
@@ -212,7 +194,6 @@ module FiberTools
       if @count == 0
         @owner = nil
         @mon_mutex.unlock
-        log("Gave up ownership")
       end
     end
     
