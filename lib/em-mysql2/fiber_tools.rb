@@ -4,67 +4,33 @@
 # em-synchrony.
 # 
 module FiberTools
-  
-  class Queue < Array
-    def add(what)
-      
-    end
-    
-    def delete()
-      
-    end
-    
-    def clear
-      
-    end
-    
-    def any_waiting?
-      
-    end
-    
-    
-    # def wait(timeout)
-    #   t = timeout || 5
-    #   fiber = Fiber.current
-    #   x = EM::Timer.new(t) do
-    #     @queue.delete(fiber)
-    #     fiber.resume(false)
-    #   end
-    #   @queue << fiber
-    #   Fiber.yield.tap do
-    #     x.cancel
-    #   end
-    # end
-    
-    
-    def can_remove_no_wait?
-      
-    end
-    
-    
-    def poll(timeout)
-      
-    end
-
-    # def signal
-    #   fiber = @queue.pop
-    #   fiber.resume(true) if fiber
-    # end
-  end
 
   class Mutex
     def initialize
       @waiters = []
       @slept = {}
     end
+    
+    def dump_waiters(other = Fiber.current)
+      p [@waiters.map{|f| fiber_id(f.object_id).strip.to_i}, fiber_id(other.object_id).strip.to_i]
+    end
 
     def lock
       log("   LOCK:try", self)
       current = Fiber.current
-      raise FiberError if @waiters.include?(current)
+      
+      dump_waiters()
+      if @waiters.include?(current)
+        raise FiberError, "fiber tried to lock the mutex twice"
+      end
+      
       @waiters << current
-      Fiber.yield unless @waiters.first == current
+      unless @waiters.first == current
+        log("   LOCK:waiting_for_lock", self)
+        Fiber.yield
+      end
       log("   LOCK:ok", self)
+      dump_waiters()
       true
     end
 
@@ -105,14 +71,13 @@ module FiberTools
     def try_lock
       lock unless locked?
     end
-
+    
     def unlock
       raise FiberError unless @waiters.first == Fiber.current  
       @waiters.shift
       unless @waiters.empty?
         EM.next_tick{ @waiters.first.resume }
       end
-      log("   LOCK:unlock", self)
       self
     end
 
@@ -126,67 +91,85 @@ module FiberTools
   end
   
   
-  # class ConditionVariable
-  #   def initialize
-  #     @queue = []
-  #   end
-
-  #   def wait(timeout = nil)
-  #     t = timeout || 5
-  #     fiber = Fiber.current
-  #     x = EM::Timer.new(t) do
-  #       @queue.delete(fiber)
-  #       fiber.resume(false)
-  #     end
-  #     @queue << fiber
-  #     Fiber.yield.tap do
-  #       x.cancel
-  #     end
-  #   end
-
-  #   def signal
-  #     fiber = @queue.pop
-  #     fiber.resume(true) if fiber
-  #   end
-  # end
-  
-  class MonitorConditionVariable
-    def initialize(m)
-      @mutex = m
-      @queue = []
-    end
-    
-    # def wait(timeout)
-    #   t = timeout || 5
-    #   fiber = Fiber.current
-    #   @queue << fiber
-    #   p [:A]
-    #   @mutex.sleep(timeout)
-    #   p [:B]
-    # end
-
-    def wait(timeout)
-      t = timeout || 5
-      fiber = Fiber.current
-      x = EM::Timer.new(t) do
-        @queue.delete(fiber)
-        fiber.resume(false)
-      end
-      @queue << fiber
-      Fiber.yield.tap do
-        x.cancel
-      end
+  class ConditionVariable
+    #
+    # Creates a new ConditionVariable
+    #
+    def initialize
+      @waiters = {}
+      @waiters_mutex = Mutex.new
     end
 
+    #
+    # Releases the lock held in +mutex+ and waits; reacquires the lock on wakeup.
+    #
+    # If +timeout+ is given, this method returns after +timeout+ seconds passed,
+    # even if no other thread doesn't signal.
+    #
+    def wait(mutex, timeout=nil)
+      # Thread.handle_interrupt(StandardError => :never) do
+        begin
+          # Thread.handle_interrupt(StandardError => :on_blocking) do
+            @waiters_mutex.synchronize do
+              @waiters[Fiber.current] = true
+            end
+            mutex.sleep timeout
+          # end
+        ensure
+          @waiters_mutex.synchronize do
+            @waiters.delete(Fiber.current)
+          end
+        end
+      # end
+      self
+    end
+
+    #
+    # Wakes up the first thread in line waiting for this lock.
+    #
     def signal
-      fiber = @queue.pop
-      fiber.resume(true) if fiber
+      # Thread.handle_interrupt(StandardError => :on_blocking) do
+        begin
+          t, _ = @waiters_mutex.synchronize { @waiters.shift }
+          t.resume if t
+        rescue FiberError
+          retry # t was already dead?
+        end
+      # end
+      self
+    end
+
+    #
+    # Wakes up all threads waiting for this lock.
+    #
+    def broadcast
+      # Thread.handle_interrupt(StandardError => :on_blocking) do
+        threads = nil
+        @waiters_mutex.synchronize do
+          threads = @waiters.keys
+          @waiters.clear
+        end
+        for t in threads
+          begin
+            t.run
+          rescue ThreadError
+          end
+        end
+      # end
+      self
+    end
+  end
+  
+  class MonitorConditionVariable < MonitorMixin::ConditionVariable
+    def initialize(*)
+      super
+      @cond = ConditionVariable.new
     end
   end
   
   class Monitor
     def initialize
-      @mutex = Mutex.new
+      @mon_mutex = Mutex.new
       @owner = nil
       @count = 0
     end
@@ -203,7 +186,7 @@ module FiberTools
     end
     
     def new_cond
-      MonitorConditionVariable.new(@mutex)
+      MonitorConditionVariable.new(self)
     end
   
   private
@@ -212,7 +195,9 @@ module FiberTools
     #
     def mon_enter
       if @owner != Fiber.current
-        @mutex.lock
+        log("Waiting ownership")
+        @mon_mutex.lock
+        log("Got ownership")
         @owner = Fiber.current
       end
       @count += 1
@@ -226,7 +211,8 @@ module FiberTools
       @count -=1
       if @count == 0
         @owner = nil
-        @mutex.unlock
+        @mon_mutex.unlock
+        log("Gave up ownership")
       end
     end
     
