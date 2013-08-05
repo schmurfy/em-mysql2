@@ -1,4 +1,6 @@
 
+require 'fiber'
+
 #
 # this work is based on the mysql2 0.2.x gem and
 # em-synchrony.
