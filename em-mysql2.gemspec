@@ -16,5 +16,5 @@ Gem::Specification.new do |gem|
   
   gem.add_dependency 'mysql2',        '~> 0.3.11'
   gem.add_dependency 'activerecord',  '~> 4.0'
-  gem.add_dependency 'eventmachine',  '~> 1.0.0'
+  gem.add_dependency 'eventmachine',  '>= 1.0.0'
 end
