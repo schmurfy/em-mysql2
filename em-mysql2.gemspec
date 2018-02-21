@@ -14,7 +14,7 @@ Gem::Specification.new do |gem|
   gem.require_paths = ["lib"]
   gem.version       = EmMysql2::VERSION
   
-  gem.add_dependency 'mysql2',        '~> 0.3.11'
+  gem.add_dependency 'mysql2',        '~> 0.4.0'
   gem.add_dependency 'activerecord',  '~> 4.0'
   gem.add_dependency 'eventmachine',  '>= 1.0.0'
 end
